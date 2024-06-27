@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader, random_split
 
-from dataset import BiligualDataset, causal_mask
+from dataset import BilingualDataset, causal_mask
 from model import build_transformer
 from config import get_config, get_weights_file_path
 
@@ -27,7 +27,7 @@ def get_or_build_tokenizer(config, ds, lang):
     if not Path.exists(tokenizer_path):
         tokenizer = Tokenizer(WordLevel(unk_token='[UNK]'))
         tokenizer.pre_tokenizer = Whitespace()
-        trainer = WordLevelTrainer(special_token=["[UNK]", "[PAD]", "[SOS]", "[EOS]"], min_frequency=2)
+        trainer = WordLevelTrainer(special_tokens=["[UNK]", "[PAD]", "[SOS]", "[EOS]"], min_frequency=2)
         tokenizer.train_from_iterator(get_all_sentences(ds, lang), trainer=trainer)
         tokenizer.save(str(tokenizer_path))
     else:
@@ -35,7 +35,7 @@ def get_or_build_tokenizer(config, ds, lang):
     return tokenizer
 
 def get_ds(config):
-    ds_raw = load_dataset("opus-books", f'{config["lang_src"]}-{config["lang_tgt"]}', split="train")
+    ds_raw = load_dataset("Helsinki-NLP/opus_books", f'{config["lang_src"]}-{config["lang_tgt"]}', split="train")
 
     # Build tokenizers
     tokenizer_src = get_or_build_tokenizer(config, ds_raw, config["lang_src"])
@@ -46,8 +46,8 @@ def get_ds(config):
     val_ds_size = len(ds_raw) - train_ds_size
     train_ds_raw, val_ds_raw = random_split(ds_raw, [train_ds_size, val_ds_size])
 
-    train_ds = BiligualDataset(train_ds_raw, tokenizer_src, tokenizer_tgt, config["lang_src"], config["lang_tgt"], config["seq_len"])
-    val_ds = BiligualDataset(val_ds_raw, tokenizer_src, tokenizer_tgt, config["lang_src"], config["lang_tgt"], config["seq_len"])
+    train_ds = BilingualDataset(train_ds_raw, tokenizer_src, tokenizer_tgt, config["lang_src"], config["lang_tgt"], config["seq_len"])
+    val_ds = BilingualDataset(val_ds_raw, tokenizer_src, tokenizer_tgt, config["lang_src"], config["lang_tgt"], config["seq_len"])
 
     max_len_src = 0
     max_len_tgt = 0
@@ -70,9 +70,10 @@ def get_model(config, vocab_src_len, vocab_tgt_len):
     model = build_transformer(vocab_src_len, vocab_tgt_len, config['seq_len'], config['seq_len'], config['d_model'])
     return model
 
+# train.py 수정
 def train_model(config):
     # Define the device
-    device = torch.device("cuda" if torch.cude.is_available() else "cpu")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device {device}")
 
     Path(config['model_folder']).mkdir(parents=True, exist_ok=True)
@@ -112,8 +113,8 @@ def train_model(config):
             decoder_mask = batch["decoder_mask"].to(device) # (batch, 1, seq_len, seq_len)
 
             # Run the tensors through the transformer
-            encoder_output = model.encoder(encoder_input, encoder_mask) # (batch, seq_len, d_model)
-            decoder_output = model.decoder(encoder_output, encoder_mask, decoder_input, decoder_mask) # (batch, seq_len, d_model)
+            encoder_output = model.encode(encoder_input, encoder_mask) # (batch, seq_len, d_model)
+            decoder_output = model.decode(encoder_output, encoder_mask, decoder_input, decoder_mask) # (batch, seq_len, d_model)
             proj_output = model.project(decoder_output) # (batch, seq_len, tgt_vocab_size)
 
             label = batch["label"].to(device) # (batch, seq_len)
