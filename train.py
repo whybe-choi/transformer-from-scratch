@@ -43,7 +43,7 @@ def greedy_decode(model, source, source_mask, tokenizer_src, tokenizer_tgt, max_
         # Select the token with the max probability (because it is a greedy search)
         _, next_word = torch.max(prob, dim=1)
 
-        decoder_input = torch.cat([decoder_input, torch.empty(1, 1).fill_(next_word.item()).type_as(source).to(device)], dim=1)
+        decoder_input = torch.cat([decoder_input, torch.empty(1, 1).type_as(source).fill_(next_word.item()).to(device)], dim=1)
 
         if next_word == eos_idx:
             break
@@ -51,7 +51,7 @@ def greedy_decode(model, source, source_mask, tokenizer_src, tokenizer_tgt, max_
     return decoder_input.squeeze(0)
 
 
-def run_validation(model, validation_ds, tokenizer_src, tokenizer_tgt, max_len, device, print_msg, global_step, num_examples=2):
+def run_validation(model, validation_ds, tokenizer_src, tokenizer_tgt, max_len, device, print_msg, global_step, logging, num_examples=2):
     model.eval()
     count = 0
 
@@ -65,8 +65,8 @@ def run_validation(model, validation_ds, tokenizer_src, tokenizer_tgt, max_len, 
     with torch.no_grad():
         for batch in validation_ds:
             count += 1
-            encoder_input = batch["encoder_input"]
-            encoder_mask = batch["encoder_mask"]
+            encoder_input = batch["encoder_input"].to(device) # (batch, seq_len)
+            encoder_mask = batch["encoder_mask"].to(device) # (batch, 1, 1, seq_len)
 
             assert encoder_input.size(0) == 1, "Batch size must be 1 for validation"
 
@@ -89,21 +89,22 @@ def run_validation(model, validation_ds, tokenizer_src, tokenizer_tgt, max_len, 
             if count == num_examples:
                 break
 
-    # Evaluate the character error rate
-    # Compute the char error rate 
-    metric = torchmetrics.CharErrorRate()
-    cer = metric(predicted, expected)
-    wandb.log({'validation/cer': cer, 'global_step': global_step})
+    if logging:
+        # Evaluate the character error rate
+        # Compute the char error rate 
+        metric = torchmetrics.CharErrorRate()
+        cer = metric(predicted, expected)
+        wandb.log({'validation/cer': cer, 'global_step': global_step})
 
-    # Compute the word error rate
-    metric = torchmetrics.WordErrorRate()
-    wer = metric(predicted, expected)
-    wandb.log({'validation/wer': wer, 'global_step': global_step})
+        # Compute the word error rate
+        metric = torchmetrics.WordErrorRate()
+        wer = metric(predicted, expected)
+        wandb.log({'validation/wer': wer, 'global_step': global_step})
 
-    # Compute the BLEU metric
-    metric = torchmetrics.BLEUScore()
-    bleu = metric(predicted, expected)
-    wandb.log({'validation/BLEU': bleu, 'global_step': global_step})
+        # Compute the BLEU metric
+        metric = torchmetrics.BLEUScore()
+        bleu = metric(predicted, expected)
+        wandb.log({'validation/BLEU': bleu, 'global_step': global_step})
 
 def get_all_sentences(ds, lang):
     for item in ds:
@@ -224,7 +225,7 @@ def train_model(config):
             global_step += 1
 
         # Run validation at the end of every epoch
-        run_validation(val_dataloader, tokenizer_src, tokenizer_tgt, config["seq_len"], device, lambda msg: batch_iterator.write(msg), global_step)
+        run_validation(model, val_dataloader, tokenizer_src, tokenizer_tgt, config["seq_len"], device, lambda msg: batch_iterator.write(msg), global_step, True)
 
         # Save the model at the end of every epoch
         model_filename = get_weights_file_path(config, f"{epoch:02d}")
@@ -239,7 +240,7 @@ if __name__ == "__main__":
     warnings.filterwarnings("ignore")
 
     config = get_config()
-    config["epoch"] = 30
+    config["num_epochs"] = 30
     config["preload"] = None
 
     wandb.init(
